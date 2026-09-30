@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "IVAR glTF Viewer",
+  "version": "0.1.0",
+  "identifier": "studio.ivar.gltf-viewer",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' blob: data: http://model.localhost; connect-src 'self' ipc: http://ipc.localhost http://model.localhost blob: data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; font-src 'self' data:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "IVAR Studios AB",
+    "copyright": "© IVAR Studios AB",
+    "category": "Graphics and Design",
+    "shortDescription": "Quick Look-style glTF/GLB previewer",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["glb"],
+        "name": "glTF Binary",
+        "description": "glTF Binary 3D model",
+        "mimeType": "model/gltf-binary",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["gltf"],
+        "name": "glTF",
+        "description": "glTF 3D model",
+        "mimeType": "model/gltf+json",
+        "role": "Viewer"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

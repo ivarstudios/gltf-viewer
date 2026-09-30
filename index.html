@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IVAR glTF Viewer</title>
+  </head>
+  <body>
+    <header id="titlebar" data-tauri-drag-region>
+      <div class="tb-left" data-tauri-drag-region>
+        <span id="issues-badge" class="badge hidden" title="Validation issues"></span>
+      </div>
+      <div class="tb-center" data-tauri-drag-region>
+        <span id="file-name" data-tauri-drag-region>IVAR glTF Viewer</span>
+        <span id="file-pos" data-tauri-drag-region></span>
+      </div>
+      <div class="tb-right">
+        <button id="btn-info" title="Info &amp; validation (I)">
+          <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" /><path d="M8 7.2v4M8 4.8v.2" /></svg>
+        </button>
+        <button id="btn-settings" title="Display settings (S)">
+          <svg viewBox="0 0 16 16"><path d="M2 4h7M12 4h2M2 12h2M7 12h7" /><circle cx="10.5" cy="4" r="1.5" /><circle cx="5.5" cy="12" r="1.5" /></svg>
+        </button>
+        <button id="btn-fullscreen" title="Fullscreen (F)">
+          <svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
+        </button>
+        <button id="btn-close" class="close" title="Close (Space / Esc)">
+          <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <main id="stage">
+      <div id="canvas-host"></div>
+      <div id="status" class="hidden"></div>
+      <aside id="settings-panel" class="panel hidden"></aside>
+      <aside id="info-panel" class="panel hidden"></aside>
+    </main>
+
+    <footer id="anim-bar" class="hidden">
+      <button id="anim-play" title="Play / pause">
+        <svg viewBox="0 0 16 16" class="icon-play"><path d="M5 3.5v9l7-4.5z" /></svg>
+        <svg viewBox="0 0 16 16" class="icon-pause"><path d="M5 3.5v9M11 3.5v9" /></svg>
+      </button>
+      <select id="anim-clip" title="Animation clip"></select>
+      <input id="anim-scrub" type="range" min="0" max="1" step="0.0001" value="0" />
+      <span id="anim-time">0.00 / 0.00</span>
+      <select id="anim-speed" title="Playback speed">
+        <option value="0.25">0.25×</option>
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+      </select>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
