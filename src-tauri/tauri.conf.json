@@ -17,7 +17,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "IVAR Studios AB",
     "copyright": "© IVAR Studios AB",
     "category": "Graphics and Design",
@@ -30,14 +32,18 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["glb"],
+        "ext": [
+          "glb"
+        ],
         "name": "glTF Binary",
         "description": "glTF Binary 3D model",
         "mimeType": "model/gltf-binary",
         "role": "Viewer"
       },
       {
-        "ext": ["gltf"],
+        "ext": [
+          "gltf"
+        ],
         "name": "glTF",
         "description": "glTF 3D model",
         "mimeType": "model/gltf+json",
@@ -46,7 +52,8 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico"
       }
     }
   }

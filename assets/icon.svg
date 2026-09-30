@@ -1,20 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2a2d36"/>
-      <stop offset="1" stop-color="#15161a"/>
-    </linearGradient>
-    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#93c5fd"/>
-      <stop offset="1" stop-color="#60a5fa"/>
-    </linearGradient>
-  </defs>
-  <rect x="48" y="48" width="928" height="928" rx="200" fill="url(#bg)"/>
-  <g stroke-linejoin="round">
-    <path d="M512 196 L786 354 L512 512 L238 354 Z" fill="url(#top)"/>
-    <path d="M238 354 L512 512 L512 828 L238 670 Z" fill="#3b82f6"/>
-    <path d="M786 354 L512 512 L512 828 L786 670 Z" fill="#1d4ed8"/>
-    <path d="M512 196 L786 354 L786 670 L512 828 L238 670 L238 354 Z M238 354 L512 512 L786 354 M512 512 L512 828"
-          fill="none" stroke="#e0f2fe" stroke-width="22" stroke-opacity="0.85"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 173.2 200" width="173.2" height="200">
+  <!-- IVAR glTF Viewer: the IVAR Studios hexagon (ink #333333, white inside) and a solid isometric cube,
+       its three faces split by white cuts. `npx tauri icon assets/icon.svg` builds the app and installer icons from this file. -->
+  <polygon points="86.6,0 173.2,50 173.2,150 86.6,200 0,150 0,50" fill="#333333"/>
+  <polygon points="86.6,16.3 158.5,58.15 158.5,141.85 86.6,183.7 14.1,141.85 14.1,58.15" fill="#ffffff"/>
+  <polygon points="86.60,58.00 122.97,79.00 122.97,121.00 86.60,142.00 50.23,121.00 50.23,79.00" fill="#333333" stroke="#333333" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M50.23,79.00 L86.60,100.00 L122.97,79.00 M86.60,100.00 L86.60,142.00" stroke="#ffffff" stroke-width="5" fill="none"/>
 </svg>
