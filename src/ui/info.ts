@@ -56,12 +56,14 @@ export class InfoPanel {
   private model: ModelInfo | null = null;
   private report: ValidatorReport | null = null;
   private validationError: string | null = null;
+  private validationSkipped: string | null = null;
   private validating = false;
 
   setModel(model: ModelInfo | null) {
     this.model = model;
     this.report = null;
     this.validationError = null;
+    this.validationSkipped = null;
     this.badge.className = 'badge hidden';
     this.render();
   }
@@ -93,6 +95,16 @@ export class InfoPanel {
         this.render();
       }
     }
+  }
+
+  /** Records why validation did not run (e.g. file too large) and shows it in the panel. */
+  skipValidation(reason: string) {
+    this.validating = false;
+    this.report = null;
+    this.validationError = null;
+    this.validationSkipped = reason;
+    this.badge.className = 'badge hidden';
+    this.render();
   }
 
   toggle(force?: boolean) {
@@ -166,6 +178,8 @@ export class InfoPanel {
     html += '<h3>Validation</h3>';
     if (this.validating) {
       html += '<p class="muted">Validating…</p>';
+    } else if (this.validationSkipped) {
+      html += `<p class="muted">${esc(this.validationSkipped)}</p>`;
     } else if (this.validationError) {
       html += `<p class="muted">Validator failed: ${esc(this.validationError)}</p>`;
     } else if (this.report) {

@@ -12,7 +12,7 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' blob: data: http://model.localhost; connect-src 'self' ipc: http://ipc.localhost http://model.localhost blob: data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; font-src 'self' data:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' blob: data: http://model.localhost; connect-src 'self' ipc: http://ipc.localhost http://model.localhost blob: data:; script-src 'self' 'wasm-unsafe-eval';font-src 'self' data:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {
@@ -50,10 +50,14 @@
         "role": "Viewer"
       }
     ],
+    "resources": {
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "./windows/hooks.nsi"
       }
     }
   }

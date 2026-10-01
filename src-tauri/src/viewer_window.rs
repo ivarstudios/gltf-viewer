@@ -221,8 +221,8 @@ mod platform {
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, GetWindowThreadProcessId, IsWindow, SetForegroundWindow, SetWindowPos, SWP_NOACTIVATE,
-        SWP_NOZORDER,
+        GetWindowRect, GetWindowThreadProcessId, IsHungAppWindow, IsWindow, SetForegroundWindow, SetWindowPos,
+        SWP_NOACTIVATE, SWP_NOZORDER,
     };
 
     pub fn round_corners(hwnd: HWND) {
@@ -243,7 +243,9 @@ mod platform {
         let top = HWND(target.top as *mut _);
         let control = HWND(target.control as *mut _);
         unsafe {
-            if !IsWindow(Some(top)).as_bool() {
+            // AttachThreadInput blocks on the other thread's queue; a hung Explorer would hang
+            // us (tray included), so give up on focus restore rather than risk that.
+            if !IsWindow(Some(top)).as_bool() || IsHungAppWindow(top).as_bool() {
                 return;
             }
             let _ = SetForegroundWindow(top);

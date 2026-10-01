@@ -6,7 +6,9 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_window_state::AppHandleExt;
 
-pub fn create(app: &AppHandle) -> tauri::Result<()> {
+/// Builds the tray icon and menu. Returns the "Start with Windows" item so the
+/// first-run prompt can reflect the user's answer in it.
+pub fn create(app: &AppHandle) -> tauri::Result<CheckMenuItem<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", "Open file…", true, None::<&str>)?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart_enabled, None::<&str>)?;
@@ -24,6 +26,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
+    let autostart_item = autostart.clone();
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("bundle icon missing"))
         .tooltip("IVAR glTF Viewer\nSelect a .glb/.gltf in Explorer and press Space")
@@ -33,11 +36,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "open" => pick_file(app),
             "autostart" => {
                 let manager = app.autolaunch();
-                let result = if autostart.is_checked().unwrap_or(false) { manager.enable() } else { manager.disable() };
+                let result = if autostart_item.is_checked().unwrap_or(false) { manager.enable() } else { manager.disable() };
                 if let Err(err) = result {
                     crate::log(app, &format!("autostart toggle failed: {err}"));
                 }
-                let _ = autostart.set_checked(manager.is_enabled().unwrap_or(false));
+                let _ = autostart_item.set_checked(manager.is_enabled().unwrap_or(false));
             }
             "about" => show_about(app),
             "quit" => {
@@ -52,7 +55,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    Ok(())
+    Ok(autostart)
 }
 
 pub fn pick_file(app: &AppHandle) {
@@ -75,9 +78,11 @@ fn show_about(app: &AppHandle) {
             "IVAR glTF Viewer {version}\n© IVAR Studios AB\n\n\
              Select a .glb or .gltf file in Explorer or on the desktop and press Space to preview it. \
              Press Space or Esc to close, ←/→ for the next file in the folder.\n\n\
+             Works fully offline: nothing is collected or sent anywhere.\n\n\
              Viewer based on three-gltf-viewer by Don McCurdy (MIT). \
              Validation by the Khronos glTF-Validator (Apache-2.0). \
-             HDR environments from Poly Haven (CC0)."
+             HDR environments from Poly Haven (CC0). \
+             See THIRD-PARTY-NOTICES.md in the install folder for all licenses."
         ))
         .title("About IVAR glTF Viewer")
         .kind(MessageDialogKind::Info)

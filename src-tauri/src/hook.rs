@@ -3,7 +3,13 @@
 //! A low-level keyboard hook runs on its own thread and does only cheap window
 //! class checks (the OS drops hooks that are slow). Matching presses are handed
 //! to a worker thread that asks Explorer over COM which file is selected.
-//! The key is never swallowed.
+//! The key is never swallowed. Only Space is ever looked at; no other key is
+//! read, logged or forwarded anywhere.
+//!
+//! Windows silently removes a low-level hook whose callback has been too slow a
+//! few times (`LowLevelHooksTimeout`), with no notification and no way to query
+//! it. The hook thread therefore re-installs the hook on a timer so a dropped
+//! hook heals itself within minutes instead of leaving Space dead until restart.
 
 use crate::{explorer, viewer_window};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,9 +24,13 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
-    GetMessageW, GetParent, GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage, GA_ROOT,
-    GUITHREADINFO, HC_ACTION, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
+    GetMessageW, GetParent, GetWindowThreadProcessId, SetTimer, SetWindowsHookExW, TranslateMessage,
+    UnhookWindowsHookEx, GA_ROOT, GUITHREADINFO, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
+    WM_KEYUP, WM_TIMER,
 };
+
+/// How often the hook is re-installed (see module docs).
+const REHOOK_INTERVAL_MS: u32 = 5 * 60 * 1000;
 
 /// A Space press in a file view. HWNDs are stored as integers so they can cross threads.
 #[derive(Clone, Copy, Debug)]
@@ -62,19 +72,39 @@ pub fn start(app: AppHandle) {
     std::thread::Builder::new()
         .name("keyboard-hook".into())
         .spawn(move || unsafe {
-            let module = GetModuleHandleW(None).ok().map(Into::into);
-            if let Err(err) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0) {
-                crate::log(&app, &format!("could not install keyboard hook: {err}"));
-                return;
-            }
+            let mut hook = match install() {
+                Ok(hook) => hook,
+                Err(err) => {
+                    crate::log(&app, &format!("could not install keyboard hook: {err}"));
+                    return;
+                }
+            };
+            // A thread timer (no window) delivers WM_TIMER through this queue.
+            SetTimer(None, 0, REHOOK_INTERVAL_MS, None);
             // Low-level hooks are called through this thread's message loop.
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_TIMER && msg.hwnd.is_invalid() {
+                    let _ = UnhookWindowsHookEx(hook);
+                    match install() {
+                        Ok(fresh) => hook = fresh,
+                        Err(err) => {
+                            crate::log(&app, &format!("could not re-install keyboard hook: {err}"));
+                            return;
+                        }
+                    }
+                    continue;
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         })
         .expect("failed to start keyboard hook thread");
+}
+
+unsafe fn install() -> windows::core::Result<HHOOK> {
+    let module = GetModuleHandleW(None).ok().map(Into::into);
+    SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0)
 }
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
