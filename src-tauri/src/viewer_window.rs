@@ -1,17 +1,33 @@
 //! The preview window: created on demand, hidden on close, destroyed after a
 //! few idle minutes so no WebView2 processes stay around in the background.
+//!
+//! Every window operation (open, hide, idle destroy) runs on one worker thread, in the
+//! order it was requested. Two things depend on that:
+//!
+//! - Window calls made from the main thread are dispatched inline by the runtime, and the
+//!   nested window events that `show()` produces then re-enter runtime locks that are still
+//!   held, which deadlocks the event loop (issue #17). From any other thread the same calls
+//!   go through the event-loop proxy, which is safe.
+//! - Creating a WebView2 window takes hundreds of milliseconds, during which the runtime
+//!   does not know the label yet. With opens and hides arriving from several threads (the
+//!   keyboard hook, a double-click forwarded by the single-instance plugin, the tray, the
+//!   page) two creates could run at once and leave an orphan window, or a hide could land
+//!   before the show it was meant to undo. One queue makes those sequences well-defined.
 
 use crate::files;
 use serde::Serialize;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_window_state::AppHandleExt;
 
 pub const LABEL: &str = "viewer";
 /// How long a hidden viewer is kept alive so reopening is instant.
 const IDLE_DESTROY_AFTER: Duration = Duration::from_secs(180);
+/// How long to wait for a destroyed window to leave the runtime before continuing.
+const DESTROY_SETTLE: Duration = Duration::from_secs(2);
 
 /// Sent to the frontend; mirrors `Session` in src/main.ts.
 #[derive(Clone, Serialize)]
@@ -45,13 +61,30 @@ pub struct FocusTarget {
     pub control: isize,
 }
 
+enum Op {
+    Open { files: Vec<PathBuf>, index: usize, return_focus: Option<FocusTarget>, toggle: bool },
+    /// A single file from the tray, command line or drag & drop; siblings come from the folder listing.
+    OpenFile(PathBuf),
+    Hide,
+    DestroyIfIdle(u64),
+}
+
 #[derive(Default)]
-pub struct ViewerState(Mutex<Inner>);
+pub struct ViewerState {
+    inner: Mutex<Inner>,
+    ops: OnceLock<Sender<Op>>,
+}
 
 impl ViewerState {
     /// The model on screen (or about to be); the protocol only serves files from its volume.
     pub fn current_file(&self) -> Option<PathBuf> {
-        self.0.lock().unwrap().session.as_ref().and_then(Session::current).map(PathBuf::from)
+        self.inner.lock().unwrap().session.as_ref().and_then(Session::current).map(PathBuf::from)
+    }
+
+    fn send(&self, op: Op) {
+        if let Some(ops) = self.ops.get() {
+            let _ = ops.send(op);
+        }
     }
 }
 
@@ -64,36 +97,57 @@ struct Inner {
     generation: u64,
 }
 
-/// Opens a file from the tray, command line or drag & drop; siblings come from the folder listing.
-///
-/// Always runs on its own thread. Window calls made from the main thread are dispatched
-/// inline by the runtime, and the nested window events that `show()` produces then re-enter
-/// runtime locks that are still held, which deadlocks the main thread (issue #17). From any
-/// other thread the same calls go through the event-loop proxy, which is safe; this is the
-/// path the keyboard hook and the file picker already use.
-pub fn open_file(app: &AppHandle, path: PathBuf) {
-    let app = app.clone();
+/// Starts the window worker. Must run once, from setup, before anything can open the viewer.
+pub fn start(app: AppHandle) {
+    let (tx, rx) = channel::<Op>();
+    let _ = app.state::<ViewerState>().ops.set(tx);
     std::thread::Builder::new()
-        .name("open-file".into())
+        .name("viewer-window".into())
         .spawn(move || {
-            let files = files::gltf_siblings(&path);
-            let index = files.iter().position(|f| *f == path).unwrap_or(0);
-            open(&app, files, index, None, false);
+            for op in rx {
+                match op {
+                    Op::Open { files, index, return_focus, toggle } => do_open(&app, files, index, return_focus, toggle),
+                    Op::OpenFile(path) => {
+                        let files = files::gltf_siblings(&path);
+                        let index = files.iter().position(|f| files::same_path(f, &path)).unwrap_or(0);
+                        do_open(&app, files, index, None, false);
+                    }
+                    Op::Hide => do_hide(&app),
+                    Op::DestroyIfIdle(generation) => do_destroy_if_idle(&app, generation),
+                }
+            }
         })
-        .expect("failed to spawn open-file thread");
+        .expect("failed to start viewer-window thread");
+}
+
+/// Opens a file from the tray, command line or drag & drop.
+pub fn open_file(app: &AppHandle, path: PathBuf) {
+    app.state::<ViewerState>().send(Op::OpenFile(path));
 }
 
 /// Shows `files[index]`. With `toggle`, pressing Space again on the file already
 /// on screen hides the viewer instead, like Quick Look.
 pub fn open(app: &AppHandle, files: Vec<PathBuf>, index: usize, return_focus: Option<FocusTarget>, toggle: bool) {
+    app.state::<ViewerState>().send(Op::Open { files, index, return_focus, toggle });
+}
+
+/// Hides the viewer (reached from the `hide_viewer` command and the close-request event).
+pub fn hide(app: &AppHandle) {
+    app.state::<ViewerState>().send(Op::Hide);
+}
+
+fn do_open(app: &AppHandle, files: Vec<PathBuf>, index: usize, return_focus: Option<FocusTarget>, toggle: bool) {
     let state = app.state::<ViewerState>();
     let session = Session::new(files, index);
     {
-        let mut inner = state.0.lock().unwrap();
-        let same_file = inner.session.as_ref().and_then(Session::current) == session.current();
+        let mut inner = state.inner.lock().unwrap();
+        let same_file = match (inner.session.as_ref().and_then(Session::current), session.current()) {
+            (Some(shown), Some(wanted)) => files::same_path(Path::new(shown), Path::new(wanted)),
+            _ => false,
+        };
         if toggle && inner.visible && same_file {
             drop(inner);
-            hide(app);
+            do_hide(app);
             return;
         }
         inner.session = Some(session.clone());
@@ -102,13 +156,14 @@ pub fn open(app: &AppHandle, files: Vec<PathBuf>, index: usize, return_focus: Op
         inner.generation += 1;
     }
 
+    let near = return_focus.map(|t| t.top);
     let result = match app.get_webview_window(LABEL) {
         Some(window) => {
             let _ = window.emit_to(LABEL, "open-session", &session);
-            show(&window, return_focus.map(|t| t.top))
+            show(&window, near)
         }
         // A fresh window asks for the session itself once its page has loaded.
-        None => create(app).and_then(|window| show(&window, return_focus.map(|t| t.top))),
+        None => create(app).and_then(|window| show(&window, near)),
     };
     if let Err(err) = result {
         crate::log(app, &format!("could not show viewer: {err}"));
@@ -150,37 +205,36 @@ fn show(window: &WebviewWindow, near: Option<isize>) -> tauri::Result<()> {
     }
     #[cfg(not(windows))]
     let _ = near;
+    let webview: &tauri::Webview = window.as_ref();
+    // The webview is hidden together with the window (see do_hide); bring it back first.
+    webview.show()?;
     window.show()?;
     window.unminimize()?;
     window.set_focus()?;
     // Focusing the window alone leaves keyboard input outside WebView2 after a
     // programmatic show; move it into the page so Space/Esc/arrows work at once.
-    let webview: &tauri::Webview = window.as_ref();
     webview.set_focus()
 }
 
-/// Hides the viewer. The state flip is immediate; the window calls run on a worker thread
-/// for the same reason as in [`open_file`] (this is reached from the `hide_viewer` command
-/// and the close-request event, both on the main thread).
-pub fn hide(app: &AppHandle) {
+fn do_hide(app: &AppHandle) {
     let state = app.state::<ViewerState>();
     let (generation, return_focus) = {
-        let mut inner = state.0.lock().unwrap();
+        let mut inner = state.inner.lock().unwrap();
         inner.visible = false;
         inner.generation += 1;
         (inner.generation, inner.return_focus)
     };
-    let app = app.clone();
-    std::thread::Builder::new()
-        .name("hide-viewer".into())
-        .spawn(move || hide_on_worker(&app, generation, return_focus))
-        .expect("failed to spawn hide-viewer thread");
-}
-
-fn hide_on_worker(app: &AppHandle, generation: u64, return_focus: Option<FocusTarget>) {
-    let _ = app.save_window_state(crate::WINDOW_STATE_FLAGS);
     if let Some(window) = app.get_webview_window(LABEL) {
+        // Alt+F4 in fullscreen: leave it before the size is remembered and the window reused.
+        if window.is_fullscreen().unwrap_or(false) {
+            let _ = window.set_fullscreen(false);
+        }
+        let _ = app.save_window_state(crate::WINDOW_STATE_FLAGS);
         let _ = window.hide();
+        // Hiding the HWND alone does not tell WebView2 the page is invisible; hiding the
+        // webview does, which pauses the page's render loop while the viewer is closed.
+        let webview: &tauri::Webview = window.as_ref();
+        let _ = webview.hide();
     }
     #[cfg(windows)]
     if let Some(target) = return_focus {
@@ -192,40 +246,56 @@ fn hide_on_worker(app: &AppHandle, generation: u64, return_focus: Option<FocusTa
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(IDLE_DESTROY_AFTER);
-        let state = app.state::<ViewerState>();
-        let idle = {
-            let inner = state.0.lock().unwrap();
-            inner.generation == generation && !inner.visible
-        };
-        if idle {
-            if let Some(window) = app.get_webview_window(LABEL) {
-                let _ = window.destroy();
-            }
-        }
+        app.state::<ViewerState>().send(Op::DestroyIfIdle(generation));
     });
+}
+
+fn do_destroy_if_idle(app: &AppHandle, generation: u64) {
+    let state = app.state::<ViewerState>();
+    let idle = {
+        let inner = state.inner.lock().unwrap();
+        inner.generation == generation && !inner.visible
+    };
+    if !idle {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let _ = window.destroy();
+        // destroy() is posted to the event loop. Wait for the window to leave the runtime so
+        // an open queued behind this creates a fresh one instead of talking to a dying one.
+        let deadline = Instant::now() + DESTROY_SETTLE;
+        while app.get_webview_window(LABEL).is_some() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 
 #[tauri::command]
 pub fn get_session(state: tauri::State<'_, ViewerState>) -> Option<Session> {
-    state.0.lock().unwrap().session.clone()
+    state.inner.lock().unwrap().session.clone()
 }
 
-#[tauri::command]
+// `navigate` and `open_path` touch the file system (a stat, a directory listing), which on a
+// slow or disconnected share can take seconds; `async` keeps that off the main thread.
+
+#[tauri::command(async)]
 pub fn navigate(state: tauri::State<'_, ViewerState>, delta: i64) -> Option<Session> {
-    let mut inner = state.0.lock().unwrap();
-    let session = inner.session.as_ref()?;
-    let len = session.files.len() as i64;
-    if len == 0 {
+    let files: Vec<PathBuf> = {
+        let inner = state.inner.lock().unwrap();
+        inner.session.as_ref()?.files.iter().map(PathBuf::from).collect()
+    };
+    if files.is_empty() {
         return None;
     }
-    let index = (session.index as i64 + delta).rem_euclid(len) as usize;
-    let files = session.files.iter().map(PathBuf::from).collect();
+    let mut inner = state.inner.lock().unwrap();
+    let session = inner.session.as_ref()?;
+    let index = (session.index as i64 + delta).rem_euclid(files.len() as i64) as usize;
     let next = Session::new(files, index);
     inner.session = Some(next.clone());
     Some(next)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_path(state: tauri::State<'_, ViewerState>, path: String) -> Result<Session, String> {
     let path = PathBuf::from(path);
     if !files::is_gltf(&path) {
@@ -236,9 +306,9 @@ pub fn open_path(state: tauri::State<'_, ViewerState>, path: String) -> Result<S
         return Err("File not found.".into());
     }
     let files = files::gltf_siblings(&path);
-    let index = files.iter().position(|f| *f == path).unwrap_or(0);
+    let index = files.iter().position(|f| files::same_path(f, &path)).unwrap_or(0);
     let session = Session::new(files, index);
-    state.0.lock().unwrap().session = Some(session.clone());
+    state.inner.lock().unwrap().session = Some(session.clone());
     Ok(session)
 }
 

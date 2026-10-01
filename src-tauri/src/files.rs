@@ -20,10 +20,20 @@ pub fn gltf_siblings(path: &Path) -> Vec<PathBuf> {
         })
         .unwrap_or_default();
     files.sort_by(|a, b| natural_cmp(a, b));
-    if !files.iter().any(|f| f == path) {
+    if !files.iter().any(|f| same_path(f, path)) {
         files.push(path.to_path_buf());
     }
     files
+}
+
+/// Path equality the way Windows sees it: case-insensitive, either separator. A path typed on
+/// the command line or reported by Explorer can differ in case from what `read_dir` returns.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    normalized(a) == normalized(b)
+}
+
+fn normalized(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
 
 #[cfg(windows)]
@@ -62,12 +72,23 @@ mod tests {
         }
         let files = gltf_siblings(&dir.join("b2.glb"));
         let names: Vec<_> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        // The same file named with another case is found, not added a second time.
+        let other_case = gltf_siblings(&dir.join("B2.GLB"));
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(names, ["a.gltf", "B1.GLB", "b2.glb", "b10.glb"]);
+        assert_eq!(other_case.len(), 4);
+        assert_eq!(other_case.iter().position(|f| same_path(f, &dir.join("B2.GLB"))), Some(2));
 
         // A file that is not on disk (yet) is still a one-item session.
         let ghost = dir.join("missing.glb");
         assert_eq!(gltf_siblings(&ghost), vec![ghost.clone()]);
+    }
+
+    #[test]
+    fn same_path_ignores_case_and_separators() {
+        assert!(same_path(Path::new(r"C:\Models\A.GLB"), Path::new("c:/models/a.glb")));
+        assert!(same_path(Path::new(r"\\Server\Share\x.glb"), Path::new(r"\\server\share\x.glb")));
+        assert!(!same_path(Path::new(r"C:\Models\a.glb"), Path::new(r"C:\Models\b.glb")));
     }
 }
 

@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
     GetMessageW, GetParent, GetWindowThreadProcessId, SetTimer, SetWindowsHookExW, TranslateMessage,
     UnhookWindowsHookEx, GA_ROOT, GUITHREADINFO, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_KEYUP, WM_TIMER,
+    WM_KEYUP, WM_SYSKEYUP, WM_TIMER,
 };
 
 /// How often the hook is re-installed (see module docs).
@@ -86,6 +86,8 @@ pub fn start(app: AppHandle) {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 if msg.message == WM_TIMER && msg.hwnd.is_invalid() {
                     let _ = UnhookWindowsHookEx(hook);
+                    // A key-up that happened while no hook was installed was never seen.
+                    SPACE_DOWN.store(false, Ordering::Relaxed);
                     match install() {
                         Ok(fresh) => hook = fresh,
                         Err(err) => {
@@ -120,7 +122,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                         }
                     }
                 }
-                WM_KEYUP => SPACE_DOWN.store(false, Ordering::Relaxed),
+                // Space released while Alt is held arrives as WM_SYSKEYUP.
+                WM_KEYUP | WM_SYSKEYUP => SPACE_DOWN.store(false, Ordering::Relaxed),
                 _ => {}
             }
         }

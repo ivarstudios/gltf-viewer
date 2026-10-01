@@ -49,6 +49,8 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            // Before anything that can open the viewer: the hook, the tray, the arguments.
+            viewer_window::start(handle.clone());
             let autostart_item = tray::create(&handle)?;
             #[cfg(windows)]
             hook::start(handle.clone());
@@ -187,7 +189,8 @@ pub fn log(app: &AppHandle, message: &str) {
     }
 }
 
-#[tauri::command]
+// `async`: appending to the log is file I/O and a sync command would do it on the main thread.
+#[tauri::command(async)]
 fn frontend_log(app: AppHandle, message: String) {
     // One line per entry, and never more than a few hundred bytes: the page is untrusted
     // input territory (model files drive what it logs), so it must not be able to flood the log.
