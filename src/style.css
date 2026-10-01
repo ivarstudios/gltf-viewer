@@ -341,6 +341,14 @@ svg {
   padding: 3px 6px;
   font: inherit;
   max-width: 180px;
+  color-scheme: dark;
+}
+
+/* The native dropdown list takes its colours from <option>, not from the select:
+   without this it renders light text on a white popup. */
+#anim-bar select option {
+  background: #26262b;
+  color: var(--text);
 }
 
 #anim-scrub {
