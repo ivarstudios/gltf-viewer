@@ -1,4 +1,5 @@
 import type { SceneStats } from '../viewer';
+import type { ValidateRequest, ValidateResponse } from '../validator.worker';
 
 interface ValidatorMessage {
   code: string;
@@ -58,6 +59,7 @@ export class InfoPanel {
   private validationError: string | null = null;
   private validationSkipped: string | null = null;
   private validating = false;
+  private validator = new ValidatorClient();
 
   setModel(model: ModelInfo | null) {
     this.model = model;
@@ -73,16 +75,7 @@ export class InfoPanel {
     this.validating = true;
     this.render();
     try {
-      const validator = await import('gltf-validator');
-      const report = (await validator.validateBytes(new Uint8Array(buffer), {
-        uri: this.model?.fileName ?? 'model',
-        maxIssues: 500,
-        externalResourceFunction: async (uri: string) => {
-          const res = await fetch(new URL(uri, new URL(url, location.href)));
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return new Uint8Array(await res.arrayBuffer());
-        },
-      })) as ValidatorReport;
+      const report = (await this.validator.validate(buffer, url, this.model?.fileName ?? 'model')) as ValidatorReport;
       if (!isCurrent()) return;
       this.report = report;
     } catch (err) {
@@ -192,7 +185,7 @@ export class InfoPanel {
       ]);
       html += i.messages
         .map(
-          (msg) => `<div class="issue sev-${msg.severity}">
+          (msg) => `<div class="issue sev-${Number(msg.severity) || 0}">
             <div>${esc(msg.message)}</div>
             <code>${SEVERITY[msg.severity] ?? ''} · ${esc(msg.code)}</code>
             ${msg.pointer ? `<span class="pointer">${esc(msg.pointer)}</span>` : ''}
@@ -203,6 +196,75 @@ export class InfoPanel {
     }
     this.panel.innerHTML = html;
   }
+}
+
+/**
+ * Runs the validator in a Web Worker so a large file does not freeze the page. If the
+ * worker cannot start, validation falls back to the page itself (slower, same result).
+ */
+class ValidatorClient {
+  private worker: Worker | null = null;
+  private workerBroken = false;
+  private nextId = 1;
+  private pending = new Map<number, { resolve: (report: unknown) => void; reject: (err: unknown) => void }>();
+
+  validate(buffer: ArrayBuffer, url: string, uri: string): Promise<unknown> {
+    const worker = this.workerBroken ? null : this.ensureWorker();
+    if (!worker) return validateOnPage(buffer, url, uri);
+    const id = this.nextId++;
+    // The model is parsed already; hand the worker its own copy so the page keeps the original.
+    const request: ValidateRequest = { id, buffer: buffer.slice(0), url, uri };
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      worker.postMessage(request, [request.buffer]);
+    });
+  }
+
+  private ensureWorker(): Worker | null {
+    if (this.worker) return this.worker;
+    try {
+      const worker = new Worker(new URL('../validator.worker.ts', import.meta.url), { type: 'module' });
+      worker.addEventListener('message', (e: MessageEvent<ValidateResponse>) => {
+        const { id, report, error } = e.data;
+        const call = this.pending.get(id);
+        this.pending.delete(id);
+        if (!call) return;
+        if (error !== undefined) call.reject(new Error(error));
+        else call.resolve(report);
+      });
+      worker.addEventListener('error', (e) => {
+        console.warn('Validator worker failed; validating on the page instead', e.message);
+        this.giveUp(new Error(e.message || 'validator worker failed'));
+      });
+      this.worker = worker;
+      return worker;
+    } catch (err) {
+      console.warn('Validator worker could not start; validating on the page instead', err);
+      this.workerBroken = true;
+      return null;
+    }
+  }
+
+  private giveUp(err: Error) {
+    this.workerBroken = true;
+    this.worker?.terminate();
+    this.worker = null;
+    for (const call of this.pending.values()) call.reject(err);
+    this.pending.clear();
+  }
+}
+
+async function validateOnPage(buffer: ArrayBuffer, url: string, uri: string): Promise<unknown> {
+  const validator = await import('gltf-validator');
+  return validator.validateBytes(new Uint8Array(buffer), {
+    uri,
+    maxIssues: 500,
+    externalResourceFunction: async (ref: string) => {
+      const res = await fetch(new URL(ref, new URL(url, location.href)));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+  });
 }
 
 function table(rows: [string, string][]) {
@@ -232,5 +294,5 @@ function decodeSafe(uri: string) {
 }
 
 function esc(text: string) {
-  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  return String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }

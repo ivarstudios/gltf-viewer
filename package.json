@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.0",
-    "@tauri-apps/plugin-dialog": "^2.8.0",
     "gltf-validator": "2.0.0-dev.3.10",
     "lil-gui": "^0.21.0",
     "three": "^0.186.1"

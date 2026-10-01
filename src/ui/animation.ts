@@ -25,10 +25,14 @@ export class AnimationBar {
     });
     this.speedSelect.addEventListener('change', () => this.speedSelect.blur());
     this.scrub.addEventListener('pointerdown', () => (this.scrubbing = true));
-    this.scrub.addEventListener('pointerup', () => {
-      this.scrubbing = false;
-      this.scrub.blur();
-    });
+    // pointercancel too: a scrub interrupted by the window losing capture must not
+    // leave the bar in "scrubbing" and the animation frozen.
+    for (const end of ['pointerup', 'pointercancel'] as const) {
+      this.scrub.addEventListener(end, () => {
+        this.scrubbing = false;
+        this.scrub.blur();
+      });
+    }
     this.scrub.addEventListener('input', () => this.seek(Number(this.scrub.value) * this.duration));
     viewer.onFrame = (dt) => this.update(dt);
   }
@@ -37,6 +41,7 @@ export class AnimationBar {
   reset() {
     const { clips } = this.viewer;
     this.actions = [];
+    this.scrubbing = false;
     this.clipSelect.innerHTML = '';
     this.bar.classList.toggle('hidden', clips.length === 0);
     if (!clips.length) {

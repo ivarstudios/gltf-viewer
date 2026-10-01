@@ -69,7 +69,6 @@ export class Viewer {
 
   constructor(private host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
     host.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
@@ -94,7 +93,20 @@ export class Viewer {
 
     this.envManager = new EnvironmentManager(this.renderer);
 
+    // Prefiltered environment maps live only on the GPU; after a context loss (driver reset,
+    // sleep/resume, GPU process crash) they must be rebuilt. Model textures re-upload themselves.
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => {
+      this.envManager.reset();
+      this.envRequest = 0;
+      this.applySettings({});
+    });
+
+    // Zero the frame delta across the time the page is hidden, so an animation does not
+    // jump by minutes when the viewer is shown again.
+    this.timer.connect(document);
+
     new ResizeObserver(() => this.resize()).observe(host);
+    this.watchPixelRatio();
     this.resize();
     this.applySettings(this.settings);
     this.renderer.setAnimationLoop((time) => this.tick(time));
@@ -103,6 +115,11 @@ export class Viewer {
   /** Parses a glTF/GLB buffer without touching the current scene. */
   parse(buffer: ArrayBuffer, resourcePath: string): Promise<GLTF> {
     return this.loader.parseAsync(buffer, resourcePath);
+  }
+
+  /** Frees a parsed result that will not be shown (a newer file won the race). */
+  discard(gltf: GLTF) {
+    for (const scene of gltf.scenes ?? []) disposeObject(scene);
   }
 
   setContent(gltf: GLTF) {
@@ -115,7 +132,8 @@ export class Viewer {
     wrapper.add(object);
     object.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(object);
-    if (!box.isEmpty()) object.position.sub(box.getCenter(new THREE.Vector3()));
+    const center = box.getCenter(new THREE.Vector3());
+    if (!box.isEmpty() && isFiniteVector(center)) object.position.sub(center);
 
     this.scene.add(wrapper);
     this.content = wrapper;
@@ -129,8 +147,13 @@ export class Viewer {
 
   /** Points the default camera at the whole model. */
   frame(box = this.content ? new THREE.Box3().setFromObject(this.content) : new THREE.Box3()) {
-    const sphere = box.isEmpty() ? new THREE.Sphere(new THREE.Vector3(), 1) : box.getBoundingSphere(new THREE.Sphere());
-    const radius = Math.max(sphere.radius, 1e-4);
+    let radius = box.isEmpty() ? 1 : box.getBoundingSphere(new THREE.Sphere()).radius;
+    if (!Number.isFinite(radius)) {
+      // NaN/Infinity vertex data (the validator reports it); the camera must stay usable.
+      console.warn('Model bounds are not finite; framing a unit sphere instead');
+      radius = 1;
+    }
+    radius = Math.max(radius, 1e-4);
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
     const fitFov = this.camera.aspect < 1 ? 2 * Math.atan(Math.tan(fov / 2) * this.camera.aspect) : fov;
     const distance = (radius / Math.sin(fitFov / 2)) * 1.05;
@@ -253,9 +276,29 @@ export class Viewer {
     this.dirty = true;
   }
 
+  /**
+   * The window is moved between monitors by the app itself (it opens on the monitor Space
+   * was pressed on), so the device pixel ratio can change at any time; re-read it when it does.
+   */
+  private watchPixelRatio() {
+    const watch = () => {
+      const query = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      query.addEventListener(
+        'change',
+        () => {
+          this.resize();
+          watch();
+        },
+        { once: true },
+      );
+    };
+    watch();
+  }
+
   private resize() {
     const { clientWidth: w, clientHeight: h } = this.host;
     if (!w || !h) return;
+    this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -275,10 +318,17 @@ export class Viewer {
   }
 }
 
+function isFiniteVector(v: THREE.Vector3) {
+  return Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+}
+
 function disposeObject(root: THREE.Object3D) {
   root.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (mesh.geometry) mesh.geometry.dispose();
+    // The renderer keeps a bone texture per skeleton; it is not reachable from the mesh's material.
+    const skinned = node as THREE.SkinnedMesh;
+    if (skinned.isSkinnedMesh) skinned.skeleton.dispose();
     const material = mesh.material;
     if (!material) return;
     for (const m of Array.isArray(material) ? material : [material]) {

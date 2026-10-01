@@ -24,9 +24,8 @@ export class EnvironmentManager {
   private pmrem: THREE.PMREMGenerator;
   private cache = new Map<string, Promise<THREE.Texture | null>>();
 
-  constructor(renderer: THREE.WebGLRenderer) {
-    this.pmrem = new THREE.PMREMGenerator(renderer);
-    this.pmrem.compileEquirectangularShader();
+  constructor(private renderer: THREE.WebGLRenderer) {
+    this.pmrem = this.createGenerator();
   }
 
   get(id: string): Promise<THREE.Texture | null> {
@@ -38,6 +37,23 @@ export class EnvironmentManager {
       entry.catch(() => this.cache.delete(id));
     }
     return entry;
+  }
+
+  /**
+   * Throws away every prefiltered map. Needed after a WebGL context loss: PMREM maps are
+   * render-target textures, which three cannot re-upload from CPU data like image textures.
+   */
+  reset() {
+    for (const entry of this.cache.values()) void entry.then((texture) => texture?.dispose()).catch(() => {});
+    this.cache.clear();
+    this.pmrem.dispose();
+    this.pmrem = this.createGenerator();
+  }
+
+  private createGenerator() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    pmrem.compileEquirectangularShader();
+    return pmrem;
   }
 
   private async build(id: string): Promise<THREE.Texture | null> {

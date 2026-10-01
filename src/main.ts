@@ -21,7 +21,7 @@ interface Session {
 const MODEL_ORIGIN = 'http://model.localhost';
 const isTauri = '__TAURI_INTERNALS__' in window;
 
-/** Above this the Khronos validator (which runs on the UI thread) is skipped. */
+/** Above this the Khronos validator is skipped (it still means a second copy of the file). */
 const VALIDATE_MAX_BYTES = 64 * 1024 * 1024;
 
 const statusEl = document.getElementById('status')!;
@@ -31,6 +31,8 @@ const filePosEl = document.getElementById('file-pos')!;
 let session: Session | null = null;
 let loadedKey = '';
 let loadToken = 0;
+let loadAbort: AbortController | null = null;
+let flashTimer = 0;
 
 function toModelUrl(path: string): string {
   let normalized = path.replace(/\\/g, '/');
@@ -43,9 +45,20 @@ function baseName(path: string) {
 }
 
 function showStatus(html: string | null, isError = false) {
+  clearTimeout(flashTimer);
   statusEl.classList.toggle('hidden', html === null);
   statusEl.classList.toggle('error', isError);
   if (html !== null) statusEl.innerHTML = html;
+}
+
+/** A notice that goes away by itself and then restores whatever the status showed before. */
+function flashStatus(html: string, isError = false) {
+  const previous = statusEl.classList.contains('hidden') ? null : statusEl.innerHTML;
+  const previousError = statusEl.classList.contains('error');
+  showStatus(html, isError);
+  flashTimer = window.setTimeout(() => {
+    if (statusEl.innerHTML === html) showStatus(previous, previousError);
+  }, 3000);
 }
 
 function errorMessage(err: unknown) {
@@ -54,6 +67,11 @@ function errorMessage(err: unknown) {
 
 function escapeHtml(text: string) {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/** Runs a fire-and-forget action and shows its failure instead of only logging it. */
+function attempt(work: Promise<unknown>) {
+  work.catch((err) => flashStatus(escapeHtml(errorMessage(err)), true));
 }
 
 // ---------- Window shell: works even when 3D rendering is unavailable ----------
@@ -75,8 +93,8 @@ async function toggleFullscreen() {
   await setFullscreen(!(await getCurrentWindow().isFullscreen()));
 }
 
-document.getElementById('btn-close')!.addEventListener('click', () => void hideViewer());
-document.getElementById('btn-fullscreen')!.addEventListener('click', () => void toggleFullscreen());
+document.getElementById('btn-close')!.addEventListener('click', () => attempt(hideViewer()));
+document.getElementById('btn-fullscreen')!.addEventListener('click', () => attempt(toggleFullscreen()));
 // Keep keyboard shortcuts working after clicking title bar buttons.
 document.querySelectorAll('button').forEach((b) => b.addEventListener('mouseup', () => b.blur()));
 
@@ -118,7 +136,7 @@ function runWithoutWebGL() {
   window.addEventListener('keydown', (e) => {
     if (e.key === ' ' || e.key === 'Escape') {
       e.preventDefault();
-      void hideViewer();
+      attempt(hideViewer());
     }
   });
   if (isTauri) {
@@ -159,6 +177,12 @@ function runViewer(viewer: Viewer) {
   async function loadModel(url: string, name: string, key: string) {
     const token = ++loadToken;
     const isCurrent = () => token === loadToken;
+    // A load that is no longer wanted must stop pulling the file in; otherwise a held
+    // arrow key has dozens of whole files in flight at once.
+    loadAbort?.abort();
+    const abort = new AbortController();
+    loadAbort = abort;
+
     loadedKey = '';
     viewer.clear();
     animationBar.reset();
@@ -166,14 +190,17 @@ function runViewer(viewer: Viewer) {
     showStatus('<div><div class="spinner"></div>Loading…</div>');
 
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: abort.signal });
       if (!res.ok) throw new Error(fetchErrorMessage(res.status));
       const buffer = await res.arrayBuffer();
       if (!isCurrent()) return;
 
       const resourcePath = url.slice(0, url.lastIndexOf('/') + 1);
       const gltf = await viewer.parse(buffer, resourcePath);
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        viewer.discard(gltf);
+        return;
+      }
 
       viewer.setContent(gltf);
       animationBar.reset();
@@ -188,7 +215,7 @@ function runViewer(viewer: Viewer) {
         void infoPanel.validate(buffer, url, isCurrent);
       }
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || abort.signal.aborted) return;
       console.error(err);
       showStatus(`Couldn't open ${escapeHtml(name)}\n\n${escapeHtml(errorMessage(err))}`, true);
     }
@@ -209,31 +236,37 @@ function runViewer(viewer: Viewer) {
 
   window.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement;
-    if (target.closest('input:not([type=range]), select, textarea')) {
+    // Form controls (animation bar, settings panel) own their keys; Esc just leaves them.
+    if (target.closest('input, select, textarea, .lil-gui')) {
       if (e.key === 'Escape') target.blur();
       return;
     }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
+    // Auto-repeat of a held key would queue one action per repeat (a load each, for arrows).
+    if (e.repeat) {
+      e.preventDefault();
+      return;
+    }
     let handled = true;
     switch (e.key) {
       case ' ':
-        void hideViewer();
+        attempt(hideViewer());
         break;
       case 'Escape':
-        if (document.body.classList.contains('fullscreen')) void setFullscreen(false);
-        else void hideViewer();
+        if (document.body.classList.contains('fullscreen')) attempt(setFullscreen(false));
+        else attempt(hideViewer());
         break;
       case 'ArrowRight':
       case 'ArrowDown':
-        void navigate(1);
+        attempt(navigate(1));
         break;
       case 'ArrowLeft':
       case 'ArrowUp':
-        void navigate(-1);
+        attempt(navigate(-1));
         break;
       case 'f':
       case 'F':
-        void toggleFullscreen();
+        attempt(toggleFullscreen());
         break;
       case 'i':
       case 'I':
@@ -262,7 +295,10 @@ function runViewer(viewer: Viewer) {
     await getCurrentWebview().onDragDropEvent(async (e) => {
       if (e.payload.type !== 'drop') return;
       const path = e.payload.paths.find((p) => /\.(glb|gltf)$/i.test(p));
-      if (!path) return;
+      if (!path) {
+        flashStatus('Only .glb and .gltf files can be opened here.', true);
+        return;
+      }
       try {
         await openSession(await invoke<Session>('open_path', { path }));
       } catch (err) {
@@ -276,7 +312,7 @@ function runViewer(viewer: Viewer) {
   }
 
   if (isTauri) {
-    void initTauri();
+    initTauri().catch((err) => showStatus(`The viewer could not start: ${escapeHtml(errorMessage(err))}`, true));
   } else {
     // Plain-browser dev mode: http://localhost:1420/?model=/some/file.glb
     const model = new URLSearchParams(location.search).get('model');

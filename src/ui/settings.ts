@@ -38,10 +38,25 @@ export class SettingsPanel {
       },
       'reset',
     ).name('Reset settings');
+
+    // lil-gui leaves keyboard focus on whatever was used last, so the viewer's shortcuts
+    // (Space, Esc, arrows) would keep going to that control. Hand focus back once a change
+    // is made or a button/checkbox/slider has been clicked; text fields keep it while typing.
+    this.panel.addEventListener('change', () => this.releaseFocus());
+    this.panel.addEventListener('pointerup', () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLSelectElement || active instanceof HTMLInputElement) return;
+      this.releaseFocus();
+    });
   }
 
   toggle(force?: boolean) {
     return !this.panel.classList.toggle('hidden', force === undefined ? undefined : !force);
+  }
+
+  private releaseFocus() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && this.panel.contains(active)) active.blur();
   }
 }
 
