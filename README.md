@@ -105,7 +105,6 @@ Viewer (WebView2 + Vite/TypeScript/Three.js, src/)
 - Code signing and winget publication ([#1](https://github.com/ivarstudios/gltf-viewer/issues/1))
 - Update channel for installed copies ([#3](https://github.com/ivarstudios/gltf-viewer/issues/3))
 - FBX, OBJ, USDZ, STL, PLY and other formats
-- Validation in a Web Worker
 - Space inside file open/save dialogs, Explorer thumbnails
 
 ## License

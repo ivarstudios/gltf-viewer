@@ -17,8 +17,10 @@ the application and is also available in the source repository.
 | [windows-rs](https://github.com/microsoft/windows-rs), Microsoft | Win32 bindings | MIT or Apache-2.0 |
 | [Poly Haven](https://polyhaven.com) HDRIs (studio_small_09, brown_photostudio_02, venice_sunset, kloofendal_48d_partly_cloudy_puresky) | Environment lighting | CC0 1.0 |
 
-The Rust dependency tree (Tauri, windows-rs, serde and others) is dual-licensed MIT or Apache-2.0 and
-is used here under the MIT license; the MIT text below applies.
+Most of the Rust dependency tree (Tauri, windows-rs, serde and others) is dual-licensed MIT or
+Apache-2.0 and is used here under the MIT license. A few crates carry only one of the two
+(for example tao is Apache-2.0 only; webview2-com and winreg are MIT only); both license texts
+are reproduced below and apply as each crate requires.
 
 ---
 
