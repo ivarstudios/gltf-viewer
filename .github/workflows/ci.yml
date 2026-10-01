@@ -83,7 +83,7 @@ jobs:
       # The exe and the NSIS installer are then signed during `tauri build`.
 
       - name: Build installer and upload to a draft release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
