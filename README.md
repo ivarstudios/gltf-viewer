@@ -106,9 +106,13 @@ Viewer (WebView2 + Vite/TypeScript/Three.js, src/)
 - Validation in a Web Worker
 - Space inside file open/save dialogs, Explorer thumbnails
 
-## Credits and licenses
+## License
+
+IVAR glTF Viewer is open source under the [MIT License](LICENSE), © IVAR Studios AB.
 
 All bundled third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is also installed next to the application.
+
+## Credits
 
 - [three.js](https://threejs.org) (MIT)
 - [three-gltf-viewer](https://github.com/donmccurdy/three-gltf-viewer), Don McCurdy (MIT)

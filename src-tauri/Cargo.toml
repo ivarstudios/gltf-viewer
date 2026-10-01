@@ -3,6 +3,7 @@ name = "ivar-gltf-viewer"
 version = "0.1.0"
 description = "Quick Look-style glTF/GLB previewer for Windows"
 authors = ["IVAR Studios AB"]
+license = "MIT"
 edition = "2021"
 publish = false
 
