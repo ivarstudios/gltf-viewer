@@ -1,3 +1,4 @@
+mod autostart;
 mod files;
 mod protocol;
 mod tray;
@@ -8,10 +9,10 @@ mod explorer;
 #[cfg(windows)]
 mod hook;
 
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, RunEvent};
-use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_window_state::StateFlags;
 
@@ -28,9 +29,9 @@ pub fn run() {
     tauri::Builder::default()
         // Must be first so a second launch (double-click, Open with…) is forwarded before anything else runs.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
             handle_args(app, &argv, Path::new(&cwd));
         }))
-        .plugin(tauri_plugin_autostart::Builder::new().args(["--background"]).build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(WINDOW_STATE_FLAGS)
@@ -52,12 +53,14 @@ pub fn run() {
             #[cfg(windows)]
             hook::start(handle.clone());
             start_main_thread_watchdog(handle.clone());
-            let args: Vec<String> = std::env::args().collect();
+            // `args()` would panic on a file name with an unpaired surrogate (legal on NTFS).
+            let args: Vec<OsString> = std::env::args_os().collect();
             let cwd = std::env::current_dir().unwrap_or_default();
             if is_first_run(&handle) {
                 // Ask about autostart first; the file (or picker) follows once answered.
                 ask_autostart(&handle, autostart_item, move |app| handle_args(app, &args, &cwd));
             } else {
+                autostart::heal(&handle);
                 handle_args(&handle, &args, &cwd);
             }
             Ok(())
@@ -75,35 +78,36 @@ pub fn run() {
 /// Opens a model passed on the command line (double-click / Open with…).
 /// Relative paths are resolved against `cwd`, which for a forwarded second
 /// instance is that instance's working directory.
-fn handle_args(app: &AppHandle, argv: &[String], cwd: &Path) {
+fn handle_args(app: &AppHandle, argv: &[OsString], cwd: &Path) {
     if let Some(path) = argv.iter().skip(1).map(PathBuf::from).find(|a| files::is_gltf(a)) {
         let path = if path.is_relative() { cwd.join(path) } else { path };
         viewer_window::open_file(app, path);
-    } else if !argv.iter().any(|a| a == "--background") {
+    } else if !argv.iter().any(|a| a.as_os_str() == "--background") {
         // Started by hand from the Start menu (or again while running): offer a file.
         tray::pick_file(app);
     }
 }
 
-fn first_run_marker(app: &AppHandle) -> Option<PathBuf> {
+/// Versions up to 0.1.2 recorded "question answered" as a bare marker file.
+fn legacy_first_run_marker(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|dir| dir.join("first-run-done"))
 }
 
-/// True the first time a release build starts on this machine. The marker is written
-/// right away so a crash or a dismissed dialog never makes the question come back.
-/// Dev builds never count as first run so they can't register themselves at login.
+/// True the first time a release build starts on this machine, i.e. when no autostart
+/// preference exists yet. "Off" is recorded right away so a crash or a dismissed dialog
+/// never makes the question come back; "Start with Windows" flips it. Dev builds never
+/// count as first run so they can't register themselves at login.
 fn is_first_run(app: &AppHandle) -> bool {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) || autostart::preference(app).is_some() {
         return false;
     }
-    let Some(marker) = first_run_marker(app) else { return false };
-    if marker.exists() {
+    if legacy_first_run_marker(app).is_some_and(|marker| marker.exists()) {
+        // Already answered on 0.1.x: carry the answer over from what is in the registry.
+        let answer = if autostart::is_enabled() { autostart::Preference::On } else { autostart::Preference::Off };
+        autostart::set_preference(app, answer);
         return false;
     }
-    if let Some(dir) = marker.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(marker, b"");
+    autostart::set_preference(app, autostart::Preference::Off);
     true
 }
 
@@ -123,10 +127,10 @@ fn ask_autostart(app: &AppHandle, item: tauri::menu::CheckMenuItem<tauri::Wry>, 
         .buttons(MessageDialogButtons::OkCancelCustom("Start with Windows".into(), "Not now".into()))
         .show(move |yes| {
             if yes {
-                if let Err(err) = handle.autolaunch().enable() {
+                if let Err(err) = autostart::enable(&handle) {
                     log(&handle, &format!("could not enable autostart: {err}"));
                 }
-                let _ = item.set_checked(handle.autolaunch().is_enabled().unwrap_or(false));
+                let _ = item.set_checked(autostart::is_enabled());
             }
             then(&handle);
         });

@@ -9,24 +9,30 @@ on:
 permissions:
   contents: read
 
+# One run per ref at a time: two quick tag pushes must not race on the same draft release.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
+# Actions are pinned to commits (Dependabot keeps them current); the comment is the tag.
 jobs:
   check:
     name: Type-check, build and test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
 
@@ -43,7 +49,7 @@ jobs:
         run: |
           $conf = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
           $pkg  = (Get-Content package.json | ConvertFrom-Json).version
-          $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $cargo = (cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/Cargo.toml | ConvertFrom-Json).packages[0].version
           "tauri.conf.json=$conf package.json=$pkg Cargo.toml=$cargo"
           if ($conf -ne $pkg -or $conf -ne $cargo) { throw "Version mismatch: keep package.json and Cargo.toml equal to tauri.conf.json" }
 
@@ -55,16 +61,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
 
@@ -82,23 +88,27 @@ jobs:
       #   - uses: azure/trusted-signing-action@v0
       # The exe and the NSIS installer are then signed during `tauri build`.
 
-      - name: Build installer and upload to a draft release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: IVAR glTF Viewer ${{ github.ref_name }}
-          releaseBody: See the commit history for changes. SHA-256 checksums are in SHA256SUMS.txt.
-          releaseDraft: true
-          prerelease: false
+      - name: Build installer
+        run: npm run tauri build
 
-      - name: Checksums
+      - name: Draft release with checksum
         shell: pwsh
-        run: |
-          $files = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe
-          $files | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii SHA256SUMS.txt
-          Get-Content SHA256SUMS.txt
-          gh release upload "${{ github.ref_name }}" SHA256SUMS.txt --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $exe) { throw "No installer found under src-tauri/target/release/bundle/nsis" }
+          # GitHub replaces spaces in asset names with dots, which would make the checksum
+          # file name a file that does not exist; publish a name without spaces instead.
+          $name = $exe.Name -replace ' ', '-'
+          $out = Join-Path $PWD release
+          New-Item -ItemType Directory $out | Out-Null
+          Copy-Item $exe.FullName (Join-Path $out $name)
+          $hash = (Get-FileHash (Join-Path $out $name) -Algorithm SHA256).Hash.ToLower()
+          # Two spaces and LF line endings: the format `sha256sum -c` and `shasum -c` accept.
+          [IO.File]::WriteAllText((Join-Path $out SHA256SUMS.txt), "$hash  $name`n")
+          Get-Content (Join-Path $out SHA256SUMS.txt)
+          gh release create "${{ github.ref_name }}" (Join-Path $out $name) (Join-Path $out SHA256SUMS.txt) `
+            --draft --verify-tag `
+            --title "IVAR glTF Viewer ${{ github.ref_name }}" `
+            --notes "See the commit history for changes. SHA-256 checksums are in SHA256SUMS.txt."

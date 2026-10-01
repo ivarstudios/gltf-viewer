@@ -1,8 +1,7 @@
-use crate::viewer_window;
+use crate::{autostart, viewer_window};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
-use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_window_state::AppHandleExt;
 
@@ -10,8 +9,8 @@ use tauri_plugin_window_state::AppHandleExt;
 /// first-run prompt can reflect the user's answer in it.
 pub fn create(app: &AppHandle) -> tauri::Result<CheckMenuItem<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", "Open file…", true, None::<&str>)?;
-    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
-    let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart_enabled, None::<&str>)?;
+    let autostart =
+        CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart::is_enabled(), None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "About", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(
@@ -35,12 +34,13 @@ pub fn create(app: &AppHandle) -> tauri::Result<CheckMenuItem<tauri::Wry>> {
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open" => pick_file(app),
             "autostart" => {
-                let manager = app.autolaunch();
-                let result = if autostart_item.is_checked().unwrap_or(false) { manager.enable() } else { manager.disable() };
+                // The item has already toggled itself by the time the event arrives.
+                let result =
+                    if autostart_item.is_checked().unwrap_or(false) { autostart::enable(app) } else { autostart::disable(app) };
                 if let Err(err) = result {
                     crate::log(app, &format!("autostart toggle failed: {err}"));
                 }
-                let _ = autostart_item.set_checked(manager.is_enabled().unwrap_or(false));
+                let _ = autostart_item.set_checked(autostart::is_enabled());
             }
             "about" => show_about(app),
             "quit" => {

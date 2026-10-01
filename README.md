@@ -6,7 +6,7 @@ It runs in the system tray. Select a glTF file in Explorer (or on the desktop) a
 
 ## Install
 
-1. Download `IVAR glTF Viewer_<version>_x64-setup.exe` from the [latest release](https://github.com/ivarstudios/gltf-viewer/releases/latest) (or from ivar.studio). `SHA256SUMS.txt` next to it holds the checksum.
+1. Download `IVAR-glTF-Viewer_<version>_x64-setup.exe` from the [latest release](https://github.com/ivarstudios/gltf-viewer/releases/latest) (or from ivar.studio). `SHA256SUMS.txt` next to it holds the checksum.
 2. Run it. It installs per user, needs no admin rights, and takes a few seconds.
 3. On first start it asks whether to start with Windows. Say yes if you want Space to work right after login; you can change this any time from the tray menu.
 
@@ -16,7 +16,9 @@ It runs in the system tray. Select a glTF file in Explorer (or on the desktop) a
 
 To make it the default for double-click, right-click a `.glb` → *Open with* → *Choose another app* → **IVAR glTF Viewer** → *Always*.
 
-**Uninstall** from *Settings → Apps*. The uninstaller also removes the "start with Windows" entry.
+**Upgrade** by running the new installer over the old one. Your settings, including the "start with Windows" choice, are kept.
+
+**Uninstall** from *Settings → Apps*. The uninstaller also removes the "start with Windows" entry. Tick *Delete app data* if you also want your settings and your answer to the start-with-Windows question gone; otherwise a later reinstall keeps them.
 
 ### Known conflicts
 
@@ -75,7 +77,7 @@ Dev builds never register themselves to start at login and never ask the first-r
 
 ### Releasing
 
-CI (`.github/workflows/ci.yml`) type-checks, builds and runs the Rust tests on every push. A `v*` tag additionally builds the installer and attaches it, with `SHA256SUMS.txt`, to a **draft** GitHub Release for review.
+CI (`.github/workflows/ci.yml`) type-checks, builds and runs the Rust tests on every push. A `v*` tag additionally builds the installer and creates a **draft** GitHub Release with it (renamed to `IVAR-glTF-Viewer_<version>_x64-setup.exe`, since GitHub rewrites spaces in asset names) and `SHA256SUMS.txt`.
 
 1. Set the new version in `src-tauri/tauri.conf.json` (the source of truth) and copy it to `package.json` and `src-tauri/Cargo.toml`. CI fails if they differ.
 2. Commit, then `git tag v1.2.3 && git push --tags`.
