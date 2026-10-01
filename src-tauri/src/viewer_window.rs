@@ -58,10 +58,22 @@ struct Inner {
 }
 
 /// Opens a file from the tray, command line or drag & drop; siblings come from the folder listing.
+///
+/// Always runs on its own thread. Window calls made from the main thread are dispatched
+/// inline by the runtime, and the nested window events that `show()` produces then re-enter
+/// runtime locks that are still held, which deadlocks the main thread (issue #17). From any
+/// other thread the same calls go through the event-loop proxy, which is safe; this is the
+/// path the keyboard hook and the file picker already use.
 pub fn open_file(app: &AppHandle, path: PathBuf) {
-    let files = files::gltf_siblings(&path);
-    let index = files.iter().position(|f| *f == path).unwrap_or(0);
-    open(app, files, index, None, false);
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("open-file".into())
+        .spawn(move || {
+            let files = files::gltf_siblings(&path);
+            let index = files.iter().position(|f| *f == path).unwrap_or(0);
+            open(&app, files, index, None, false);
+        })
+        .expect("failed to spawn open-file thread");
 }
 
 /// Shows `files[index]`. With `toggle`, pressing Space again on the file already
@@ -140,6 +152,9 @@ fn show(window: &WebviewWindow, near: Option<isize>) -> tauri::Result<()> {
     webview.set_focus()
 }
 
+/// Hides the viewer. The state flip is immediate; the window calls run on a worker thread
+/// for the same reason as in [`open_file`] (this is reached from the `hide_viewer` command
+/// and the close-request event, both on the main thread).
 pub fn hide(app: &AppHandle) {
     let state = app.state::<ViewerState>();
     let (generation, return_focus) = {
@@ -148,6 +163,14 @@ pub fn hide(app: &AppHandle) {
         inner.generation += 1;
         (inner.generation, inner.return_focus)
     };
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("hide-viewer".into())
+        .spawn(move || hide_on_worker(&app, generation, return_focus))
+        .expect("failed to spawn hide-viewer thread");
+}
+
+fn hide_on_worker(app: &AppHandle, generation: u64, return_focus: Option<FocusTarget>) {
     let _ = app.save_window_state(crate::WINDOW_STATE_FLAGS);
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.hide();

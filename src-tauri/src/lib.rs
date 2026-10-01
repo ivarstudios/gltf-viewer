@@ -51,6 +51,7 @@ pub fn run() {
             let autostart_item = tray::create(&handle)?;
             #[cfg(windows)]
             hook::start(handle.clone());
+            start_main_thread_watchdog(handle.clone());
             let args: Vec<String> = std::env::args().collect();
             let cwd = std::env::current_dir().unwrap_or_default();
             if is_first_run(&handle) {
@@ -129,6 +130,38 @@ fn ask_autostart(app: &AppHandle, item: tauri::menu::CheckMenuItem<tauri::Wry>, 
             }
             then(&handle);
         });
+}
+
+/// Pings the event loop every few seconds and logs once if it stops answering, so a
+/// deadlocked main thread (issue #17) leaves a trace instead of silently killing Space,
+/// the tray menu and every later "Open with".
+fn start_main_thread_watchdog(app: AppHandle) {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    std::thread::Builder::new()
+        .name("main-thread-watchdog".into())
+        .spawn(move || {
+            let mut reported = false;
+            loop {
+                std::thread::sleep(INTERVAL);
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                if app.run_on_main_thread(move || drop(tx)).is_err() {
+                    return;
+                }
+                // The sender is dropped when the task runs; a timeout means the loop never got to it.
+                let alive = matches!(
+                    rx.recv_timeout(TIMEOUT),
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+                );
+                if !alive && !reported {
+                    reported = true;
+                    log(&app, "main thread has not responded for 10 s; the viewer is deadlocked (see issue #17)");
+                } else if alive {
+                    reported = false;
+                }
+            }
+        })
+        .expect("failed to spawn watchdog");
 }
 
 /// Appends a line to `%LOCALAPPDATA%\studio.ivar.gltf-viewer\logs\viewer.log`,
