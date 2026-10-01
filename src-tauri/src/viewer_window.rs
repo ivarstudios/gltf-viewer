@@ -48,6 +48,13 @@ pub struct FocusTarget {
 #[derive(Default)]
 pub struct ViewerState(Mutex<Inner>);
 
+impl ViewerState {
+    /// The model on screen (or about to be); the protocol only serves files from its volume.
+    pub fn current_file(&self) -> Option<PathBuf> {
+        self.0.lock().unwrap().session.as_ref().and_then(Session::current).map(PathBuf::from)
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     session: Option<Session>,
@@ -223,6 +230,10 @@ pub fn open_path(state: tauri::State<'_, ViewerState>, path: String) -> Result<S
     let path = PathBuf::from(path);
     if !files::is_gltf(&path) {
         return Err("Only .glb and .gltf files are supported.".into());
+    }
+    // The page can name any path here (it comes from a drop); only real files become a session.
+    if !path.is_absolute() || !path.is_file() {
+        return Err("File not found.".into());
     }
     let files = files::gltf_siblings(&path);
     let index = files.iter().position(|f| *f == path).unwrap_or(0);

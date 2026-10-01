@@ -291,7 +291,10 @@ function fetchErrorMessage(status: number) {
     case 404:
       return 'File not found.';
     case 403:
-      return 'This file could not be read, or its type is not one the viewer serves (model and texture files only).';
+      return (
+        'This file could not be read. The viewer only serves model and texture files, ' +
+        'and only from the drive or file share the opened model is on.'
+      );
     case 413:
       return 'This file is larger than 1 GB, which is more than the viewer will load.';
     default:

@@ -48,7 +48,7 @@ Other Quick Look clones that bind Space (QuickLook, Seer) open at the same time.
 
 - The viewer is fully offline. It makes no network requests, has no telemetry and no update check.
 - To notice the Space key it installs a low-level keyboard hook. The hook looks only at whether the key is Space and whether an Explorer or desktop file list is in front. No other key is read, stored or sent anywhere, and Space is never swallowed.
-- Model files are read through an internal protocol that serves only model and texture file types from disk, never anything else.
+- Model files are read through an internal protocol that serves only model and texture file types from disk, never anything else, and only from the drive or file share the opened model is on. A model file cannot make the viewer contact another server.
 - Errors, including the paths of files that failed to open, are written to `%LOCALAPPDATA%\studio.ivar.gltf-viewer\logs\viewer.log` (rotated at 1 MB). Nothing leaves the machine.
 
 See [SECURITY.md](SECURITY.md) for how to report a vulnerability.

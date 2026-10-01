@@ -8,7 +8,7 @@ Email **fredrik@ivar.studio** with a description, the version (tray menu → Abo
 
 - **Fully offline.** No telemetry, no update checks, no network requests. The content security policy of the viewer page only allows the app's own origin and the local model protocol.
 - **Keyboard hook.** A low-level keyboard hook is used to notice the Space key. The callback checks only whether the key is Space and whether an Explorer or desktop file list is in front. No other key is read, stored or sent anywhere, and Space is never swallowed.
-- **File access.** The viewer reads files through an internal `model://` protocol that serves only model and texture file types (`.glb`, `.gltf`, `.bin`, images, KTX2), refuses device and verbatim paths and `..` segments, and caps files at 1 GiB. The webview cannot read anything else on disk.
+- **File access.** The viewer reads files through an internal `model://` protocol that serves only model and texture file types (`.glb`, `.gltf`, `.bin`, images, KTX2), refuses device and verbatim paths and `..` segments, serves only files on the same drive or file share as the model being shown (so a crafted model cannot make the viewer open an SMB connection to a server of its choosing), caps files at 1 GiB and reads at most six at a time. The webview cannot read anything else on disk.
 - **Autostart** is opt-in via a question on first run and can be changed in the tray menu. The uninstaller removes the autostart entry.
 - **Logs.** `%LOCALAPPDATA%\studio.ivar.gltf-viewer\logs\viewer.log` records errors and the paths of files that failed to open. It is rotated at 1 MB and never leaves the machine.
 

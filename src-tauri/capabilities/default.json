@@ -1,14 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the viewer window",
+  "description": "Permissions for the viewer window: exactly what src/main.ts uses. The page renders untrusted model files, so it gets no window, menu or tray creation rights (core:default would grant those).",
   "windows": ["viewer"],
   "permissions": [
-    "core:default",
+    "core:event:default",
+    "core:webview:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "core:window:allow-set-fullscreen",
-    "core:window:allow-is-fullscreen",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-internal-toggle-maximize"
+    "core:window:allow-is-fullscreen"
   ]
 }

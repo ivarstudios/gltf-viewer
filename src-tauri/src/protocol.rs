@@ -6,18 +6,26 @@
 //! percent-encoded; UNC paths use a leading `UNC/` segment.
 //!
 //! A model file is untrusted input, so what this handler will hand to the page is
-//! deliberately narrow: only file types a glTF can legitimately reference, no
-//! device or verbatim paths, no `.`/`..` segments, a size cap, and CORS limited to
-//! the app's own origin.
+//! deliberately narrow: only file types a glTF can legitimately reference, only
+//! files on the same drive or file share as the model being shown (a crafted file
+//! must not be able to make the viewer contact some other server), no device or
+//! verbatim paths, no `.`/`..` segments, a size cap, a cap on concurrent reads,
+//! and CORS limited to the app's own origin.
 
+use crate::viewer_window::ViewerState;
 use percent_encoding::percent_decode_str;
 use std::path::{Component, Path, PathBuf, Prefix};
+use std::sync::{Condvar, Mutex};
 use tauri::http::{header, Method, Request, Response, StatusCode};
-use tauri::{Runtime, UriSchemeContext, UriSchemeResponder};
+use tauri::{Manager, Runtime, UriSchemeContext, UriSchemeResponder};
 
 /// Largest file we read into memory. WebView2 holds several copies of it (fetch
 /// buffer, parsed scene, validator input), so stay well below what a 64-bit page can take.
 pub const MAX_FILE_BYTES: u64 = 1 << 30;
+
+/// Files read into memory at the same time. A model with hundreds of textures, or a
+/// held arrow key, otherwise turns into hundreds of threads each holding a whole file.
+const MAX_CONCURRENT_READS: usize = 6;
 
 /// File types a glTF/GLB can reference: the model itself, external buffers and images
 /// (core glTF plus the KTX2, WebP, AVIF, DDS and EXR texture extensions).
@@ -26,12 +34,16 @@ const SERVED_EXTENSIONS: &[&str] = &[
     "exr",
 ];
 
-pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
+static READ_GATE: Gate = Gate::new(MAX_CONCURRENT_READS);
+
+pub fn handle<R: Runtime>(ctx: UriSchemeContext<'_, R>, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
+    // Everything served must sit on the volume of the model on screen; snapshot that now.
+    let model = ctx.app_handle().state::<ViewerState>().current_file();
     // File reads can be large or slow (network shares); keep them off the event loop.
-    std::thread::spawn(move || responder.respond(respond(&request)));
+    std::thread::spawn(move || responder.respond(respond(&request, model.as_deref())));
 }
 
-fn respond(request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+fn respond(request: &Request<Vec<u8>>, model: Option<&Path>) -> Response<Vec<u8>> {
     if request.method() != Method::GET {
         return status(StatusCode::METHOD_NOT_ALLOWED);
     }
@@ -41,6 +53,12 @@ fn respond(request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     if !is_served_type(&path) {
         return status(StatusCode::FORBIDDEN);
     }
+    // Checked before touching the file system: for a UNC path, even `metadata()` opens an
+    // SMB connection (and sends the user's credentials) to whatever host is named.
+    if !model.is_some_and(|m| same_volume(m, &path)) {
+        return status(StatusCode::FORBIDDEN);
+    }
+    let _slot = READ_GATE.enter();
     let meta = match std::fs::metadata(&path) {
         Ok(meta) => meta,
         Err(err) => return status(io_status(&err)),
@@ -118,6 +136,32 @@ pub fn is_served_type(path: &Path) -> bool {
         .is_some_and(|e| SERVED_EXTENSIONS.contains(&e.as_str()))
 }
 
+/// The drive letter or `\\server\share` a path lives on.
+#[derive(Debug, PartialEq, Eq)]
+enum Volume {
+    Disk(u8),
+    Share(String, String),
+}
+
+fn volume(path: &Path) -> Option<Volume> {
+    let Component::Prefix(prefix) = path.components().next()? else { return None };
+    let lower = |s: &std::ffi::OsStr| s.to_string_lossy().to_lowercase();
+    match prefix.kind() {
+        Prefix::Disk(d) | Prefix::VerbatimDisk(d) => Some(Volume::Disk(d.to_ascii_uppercase())),
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+            Some(Volume::Share(lower(server), lower(share)))
+        }
+        _ => None,
+    }
+}
+
+/// True when both paths are on the same drive or the same file share. A model may pull in
+/// files from anywhere on its own volume (`../textures/` and the like), but never from
+/// another share, which would mean contacting another server on the model's behalf.
+pub fn same_volume(a: &Path, b: &Path) -> bool {
+    matches!((volume(a), volume(b)), (Some(x), Some(y)) if x == y)
+}
+
 fn content_type(path: &Path) -> &'static str {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
     match ext.as_str() {
@@ -138,6 +182,36 @@ fn status(code: StatusCode) -> Response<Vec<u8>> {
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, app_origin())
         .body(Vec::new())
         .unwrap()
+}
+
+/// A counting semaphore (std has none): `enter` blocks while all slots are taken.
+struct Gate {
+    free: Mutex<usize>,
+    changed: Condvar,
+}
+
+impl Gate {
+    const fn new(slots: usize) -> Self {
+        Self { free: Mutex::new(slots), changed: Condvar::new() }
+    }
+
+    fn enter(&self) -> GateSlot<'_> {
+        let mut free = self.free.lock().unwrap();
+        while *free == 0 {
+            free = self.changed.wait(free).unwrap();
+        }
+        *free -= 1;
+        GateSlot(self)
+    }
+}
+
+struct GateSlot<'a>(&'a Gate);
+
+impl Drop for GateSlot<'_> {
+    fn drop(&mut self) {
+        *self.0.free.lock().unwrap() += 1;
+        self.0.changed.notify_one();
+    }
 }
 
 #[cfg(test)]
@@ -202,5 +276,35 @@ mod tests {
         ] {
             assert!(!is_served_type(Path::new(bad)), "{bad}");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn same_volume_is_the_drive_or_share_regardless_of_case() {
+        let model = Path::new(r"C:\Downloads\evil.gltf");
+        assert!(same_volume(model, Path::new(r"c:\Users\me\Pictures\x.png")));
+        assert!(same_volume(model, Path::new(r"\\?\C:\Downloads\tex.png")));
+        assert!(!same_volume(model, Path::new(r"D:\Downloads\tex.png")));
+        // The attack this exists for: a model on a local drive naming an arbitrary share.
+        assert!(!same_volume(model, Path::new(r"\\attacker.example\share\x.bin")));
+
+        let shared = Path::new(r"\\Server\Models\a.glb");
+        assert!(same_volume(shared, Path::new(r"\\server\models\tex\b.png")));
+        assert!(!same_volume(shared, Path::new(r"\\server\other\b.png")));
+        assert!(!same_volume(shared, Path::new(r"\\other\models\b.png")));
+        assert!(!same_volume(shared, Path::new(r"C:\b.png")));
+    }
+
+    #[test]
+    fn gate_limits_concurrent_slots() {
+        let gate = Gate::new(2);
+        let a = gate.enter();
+        let b = gate.enter();
+        assert_eq!(*gate.free.lock().unwrap(), 0);
+        drop(a);
+        assert_eq!(*gate.free.lock().unwrap(), 1);
+        let _c = gate.enter();
+        drop(b);
+        assert_eq!(*gate.free.lock().unwrap(), 1);
     }
 }
