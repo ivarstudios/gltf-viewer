@@ -10,15 +10,15 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/api": "^2.12.1",
     "gltf-validator": "2.0.0-dev.3.10",
     "lil-gui": "^0.21.0",
     "three": "^0.186.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.0",
+    "@tauri-apps/cli": "^2.12.1",
     "@types/three": "^0.186.0",
     "typescript": "^5.9.3",
-    "vite": "^8.3.1"
+    "vite": "^8.3.2"
   }
 }
