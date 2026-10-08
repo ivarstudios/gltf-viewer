@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 173.2 200" width="173.2" height="200">
   <!-- IVAR glTF Viewer: the IVAR Studios hexagon (ink #333333, white inside) and a solid isometric cube,
-       its three faces split by white cuts. `npx tauri icon assets/icon.svg` builds the app and installer icons from this file. -->
+       its three faces split by white cuts. `npx tauri icon assets/icon.svg` builds the app and installer icons from this file.
+       © IVAR Studios AB, all rights reserved. Not covered by the MIT License; see README. -->
   <polygon points="86.6,0 173.2,50 173.2,150 86.6,200 0,150 0,50" fill="#333333"/>
   <polygon points="86.6,16.3 158.5,58.15 158.5,141.85 86.6,183.7 14.1,141.85 14.1,58.15" fill="#ffffff"/>
   <polygon points="86.60,58.00 122.97,79.00 122.97,121.00 86.60,142.00 50.23,121.00 50.23,79.00" fill="#333333" stroke="#333333" stroke-width="4" stroke-linejoin="round"/>

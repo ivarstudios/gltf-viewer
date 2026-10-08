@@ -1,16 +1,16 @@
 # IVAR glTF Viewer
 
-A Quick Look-style previewer for `.glb` and `.gltf` files on Windows, built by IVAR Studios AB.
+A Quick Look-style previewer for `.glb` and `.gltf` files on Windows, built by [IVAR Studios AB](https://ivar.studio). Free and open source under the MIT License.
 
 It runs in the system tray. Select a glTF file in Explorer (or on the desktop) and press **Space** to preview it; press **Space** or **Esc** again to close. It works fully offline.
 
 ## Install
 
-1. Download `IVAR-glTF-Viewer_<version>_x64-setup.exe` from the [latest release](https://github.com/ivarstudios/gltf-viewer/releases/latest) (or from ivar.studio). `SHA256SUMS.txt` next to it holds the checksum.
+1. Download `IVAR-glTF-Viewer_<version>_x64-setup.exe` from the [latest release](https://github.com/ivarstudios/gltf-viewer/releases/latest) (or from [ivar.studio](https://ivar.studio)). `SHA256SUMS.txt` next to it holds the checksum.
 2. Run it. It installs per user, needs no admin rights, and takes a few seconds.
 3. On first start it asks whether to start with Windows. Say yes if you want Space to work right after login; you can change this any time from the tray menu.
 
-**Windows SmartScreen** will show "Windows protected your PC" until the installer is code-signed (tracked in [#1](https://github.com/ivarstudios/gltf-viewer/issues/1)). Click *More info* → *Run anyway*. Compare the checksum first if you are careful.
+**Windows SmartScreen** will show "Windows protected your PC" because the installer is not code-signed yet (see [#1](https://github.com/ivarstudios/gltf-viewer/issues/1)). Click *More info* → *Run anyway*. Compare the checksum first if you are careful.
 
 **Requirements:** Windows 10 (1809 or later) or Windows 11, 64-bit. Windows 11 ships the WebView2 runtime the viewer renders with; on Windows 10 the installer downloads it if it is missing, which needs an internet connection during install only.
 
@@ -57,7 +57,7 @@ See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ## Develop
 
-Requirements: Node 20+, Rust (stable, MSVC toolchain), and Visual Studio Build Tools with the C++ workload. WebView2 ships with Windows 11.
+Requirements: Node 20.19+ or 22.12+, Rust (stable, MSVC toolchain), and Visual Studio Build Tools with the C++ workload. WebView2 ships with Windows 11.
 
 ```sh
 npm install
@@ -81,9 +81,13 @@ CI (`.github/workflows/ci.yml`) type-checks, builds and runs the Rust tests on e
 
 1. Set the new version in `src-tauri/tauri.conf.json` (the source of truth) and copy it to `package.json` and `src-tauri/Cargo.toml`. CI fails if they differ.
 2. Commit, then `git tag v1.2.3 && git push --tags`.
-3. Review the draft release on GitHub, publish it, and update the download link on the website.
+3. Review the draft release on GitHub, publish it, and update the download link on ivar.studio.
 
-Code signing is not wired up yet; see [#1](https://github.com/ivarstudios/gltf-viewer/issues/1) for the plan and the placeholder step in the workflow.
+Code signing is not wired up yet; see [#1](https://github.com/ivarstudios/gltf-viewer/issues/1) for the options and the placeholder step in the workflow.
+
+### Contributing
+
+Bug reports and pull requests are welcome. For a bug, open an issue with the app version (tray menu → About), your Windows version and, if you can share it, a model file that shows the problem. Before sending a pull request, run `npm run build` and `cargo test --manifest-path src-tauri/Cargo.toml`; CI runs the same checks. Report security problems privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 ## How it works
 
@@ -93,23 +97,28 @@ Tray process (Rust, always running)
  ├─ hook.rs           low-level keyboard hook: Space in Explorer/desktop file list
  │                    (re-installed every 5 min; Windows drops slow hooks silently)
  ├─ explorer.rs       Shell COM: selected file + folder order of the active tab
+ ├─ files.rs          sibling glTF files in name order (for files not opened via Space)
+ ├─ autostart.rs      "start with Windows" (HKCU Run entry, kept across upgrades)
  ├─ viewer_window.rs  viewer window: created on demand, hidden on close,
  │                    destroyed after 3 idle minutes (no WebView2 while idle)
  └─ protocol.rs       http://model.localhost/<path> serves local model files
-                      (allow-listed file types only, 1 GiB cap)
+                      (allow-listed file types, same drive/share as the open
+                      model only, 1 GiB cap)
 Viewer (WebView2 + Vite/TypeScript/Three.js, src/)
 ```
 
 ## Roadmap
 
 - Code signing and winget publication ([#1](https://github.com/ivarstudios/gltf-viewer/issues/1))
-- Update channel for installed copies ([#3](https://github.com/ivarstudios/gltf-viewer/issues/3))
+- Update check for installed copies ([#3](https://github.com/ivarstudios/gltf-viewer/issues/3))
 - FBX, OBJ, USDZ, STL, PLY and other formats
 - Space inside file open/save dialogs, Explorer thumbnails
 
 ## License
 
 IVAR glTF Viewer is open source under the [MIT License](LICENSE), © IVAR Studios AB.
+
+**The IVAR logo is not covered by the MIT License.** The IVAR Studios hexagon and the app icon made from it (`assets/icon.svg` and the files in `src-tauri/icons/`) are © IVAR Studios AB, all rights reserved, and are trademarks of IVAR Studios AB. If you distribute a modified version, replace the icon with your own.
 
 All bundled third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is also installed next to the application.
 
